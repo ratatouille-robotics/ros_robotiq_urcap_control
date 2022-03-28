@@ -1,9 +1,10 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # BASED ON: https://dof.robotiq.com/discussion/1962/programming-options-ur16e-2f-85#latest
 # ROS/Python2 port by felixvd
 # Messing around, SID and Hand-E testing by MOJO
 
 import socket
+from this import d
 import threading
 import json
 import time
@@ -12,6 +13,8 @@ import sys
 from enum import Enum
 from robotiq_urcap_control.msg import Robotiq2FGripper_robot_input as inputMsg
 from robotiq_urcap_control.msg import Robotiq2FGripper_robot_output as outputMsg
+from std_msgs.msg import Int16
+from robotiq_urcap_control.msg import wrapper as wrappMsg
 
 
 class RobotiqGripper:
@@ -72,7 +75,7 @@ class RobotiqGripper:
 
         self._sid_from_get = self._get_var(self.SID)
         self._check_sid()
-        print("Setting SID to: " + str(self.sid_used))
+        print(("Setting SID to: " + str(self.sid_used)))
         self._set_vars(var_dict={self.SID: self.sid_used})
 
     def disconnect(self):
@@ -80,13 +83,13 @@ class RobotiqGripper:
         self.socket.close()
 
     def _check_sid(self):
-        print("SID from input: " + str(self._sid_from_input))
-        print("SID from GET: " + str(self._sid_from_get))
+        print(("SID from input: " + str(self._sid_from_input)))
+        print(("SID from GET: " + str(self._sid_from_get)))
         if self._sid_from_input is not None:
             if self._sid_from_input != self._sid_from_get:
                 raise ValueError("SID don`t match. Check your Polyscope for gripper id.")
         self.sid_used = self._sid_from_get
-        print("SID used: " + str(self.sid_used))
+        print(("SID used: " + str(self.sid_used)))
 
     def _get_var(self, variable):
         with self.command_lock:
@@ -119,7 +122,7 @@ class RobotiqGripper:
     def _set_vars(self, var_dict):
 
         cmd = "SET"
-        for variable, value in var_dict.items():
+        for variable, value in list(var_dict.items()):
             cmd += " " + str(variable) + " " + str(value)
         cmd += '\n'  # new line is required for the command to finish
         # atomic commands send/rcv
@@ -138,8 +141,10 @@ class RobotiqGripper:
         :param auto_calibrate: Whether to calibrate the minimum and maximum positions based on actual motion.
         """
         # clear and then reset ACT
-        self._set_var(self.STA, 0)
-        self._set_var(self.STA, 1)
+        var_dict = {self.STA: 0}
+        print(self._set_vars(var_dict))
+        var_dict = {self.STA: 1}
+        print(self._set_vars(var_dict))
 
         # wait for activation to go through
         while not self.is_active():
@@ -152,7 +157,9 @@ class RobotiqGripper:
     def is_active(self):
         """Returns whether the gripper is active."""
         status = self._get_var(self.STA)
-        return status == RobotiqGripper.GripperStatus.ACTIVE
+        # print(status)
+        # return status == RobotiqGripper.GripperStatus.ACTIVE
+        return status == 3
 
     def get_min_position(self):
         """Returns the minimum position the gripper can reach (open position)."""
@@ -189,28 +196,32 @@ class RobotiqGripper:
         """
         # first try to open in case we are holding an object
         (position, status) = self.move_and_wait_for_pos(self.get_open_position(), 64, 1)
-        if status != RobotiqGripper.ObjectStatus.AT_DEST:
+        # if status != RobotiqGripper.ObjectStatus.AT_DEST:
+        if status != 3:
+        
             raise RuntimeError("Calibration failed opening to start: " + str(status))
 
         # try to close as far as possible, and record the number
         (position, status) = self.move_and_wait_for_pos(self.get_closed_position(), 64, 1)
-        if status != RobotiqGripper.ObjectStatus.AT_DEST:
+        # if status != RobotiqGripper.ObjectStatus.AT_DEST:
+        if status != 3:
             raise RuntimeError("Calibration failed because of an object: " + str(status))
         assert position <= self._max_position
         self._max_position = position
 
         # try to open as far as possible, and record the number
         (position, status) = self.move_and_wait_for_pos(self.get_open_position(), 64, 1)
-        if status != RobotiqGripper.ObjectStatus.AT_DEST:
+        # if status != RobotiqGripper.ObjectStatus.AT_DEST:
+        if status != 3:
             raise RuntimeError("Calibration failed because of an object: " + str(status))
         assert position >= self._min_position
         self._min_position = position
 
         if log:
-            print("Gripper auto-calibrated to " +
+            print(("Gripper auto-calibrated to " +
                   str(self.get_min_position()) +
                   " " +
-                  str(self.get_max_position()))
+                  str(self.get_max_position())))
 
     def move(self, position, speed, force):
         """Sends commands to start moving towards the given position, with the specified speed and force.
@@ -257,7 +268,8 @@ class RobotiqGripper:
 
         # wait until not moving
         cur_obj = self._get_var(self.OBJ)
-        while cur_obj == RobotiqGripper.ObjectStatus.MOVING:
+        # while cur_obj == RobotiqGripper.ObjectStatus.MOVING:
+        while cur_obj == 0:
             cur_obj = self._get_var(self.OBJ)
 
         # report the actual position and the object status
@@ -267,6 +279,12 @@ class RobotiqGripper:
 
     def send_command(self, command):
         self.move(command.rPR, command.rSP, command.rFR)
+    
+    def move_gripper(self, data):
+        # self.move(command.rPR, command.rSP, command.rFR)
+        rospy.loginfo(data)
+        self.move_and_wait_for_pos(position=data.pos, speed=data.speed, force=data.force)
+        # self.move_and_wait_for_pos(position=100, speed=10, force=10)
 
     def get_status(self):
         message = inputMsg()
@@ -281,24 +299,34 @@ class RobotiqGripper:
         # message.gCU  = self._get_var()  # current is not read by this package
         return message
 
-
-def mainLoop(device):
-    gripper = RobotiqGripper(robot_ip=device)
+def mainLoop():
+# def mainLoop(device):
+    # gripper = RobotiqGripper(robot_ip=device)
+    gripper = RobotiqGripper(robot_ip='10.0.0.2')
     gripper.connect()
-
+    # status = gripper.get_status()
+    # print(status)
+    # gripper.activate()
+    # gripper.auto_calibrate()
+    # gripper.move_and_wait_for_pos(position=100, speed=10, force=10)
+    # gripper.move_and_wait_for_pos(position=0, speed=100, force=10)
+    # gripper.move_and_wait_for_pos(position=255, speed=10, force=10)
     rospy.init_node('robotiq2FGripper')
 
     # The Gripper status is published on the topic named 'Robotiq2FGripperRobotInput'
     pub = rospy.Publisher('Robotiq2FGripperRobotInput', inputMsg, queue_size=1)
+    pub_gripper = rospy.Publisher('/robotiq_grip_gap', Int16, queue_size=1)
 
     # The Gripper command is received from the topic named 'Robotiq2FGripperRobotOutput'
     rospy.Subscriber('Robotiq2FGripperRobotOutput', outputMsg, gripper.send_command)
+    rospy.Subscriber('/move_gripper', wrappMsg, gripper.move_gripper)
 
     # We loop
     while not rospy.is_shutdown():
         # Get and publish the Gripper status
         status = gripper.get_status()
         pub.publish(status)
+        pub_gripper.publish(Int16(status.gPO))
 
         # Wait a little
         # rospy.sleep(0.05)
@@ -310,20 +338,22 @@ def mainLoop(device):
         # rospy.sleep(0.05)
 
 
+
 if __name__ == '__main__':
     try:
-        print("Connecting to :" + str(sys.argv[1]))
-        mainLoop(sys.argv[1])
+        # print(("Connecting to :" + str(sys.argv[1])))
+        # mainLoop(sys.argv[1])
+        mainLoop()
     except rospy.ROSInterruptException:
         pass
 
 '''
 if __name__ == '__main__':
-    gripper = RobotiqGripper(robot_ip='172.31.1.144')
+    gripper = RobotiqGripper(robot_ip='10.0.0.2')
     gripper.connect()
-    gripper.auto_calibrate()
+    # gripper.auto_calibrate()
 #    gripper.move_and_wait_for_pos(position=100, speed=10, force=10)
 #    gripper.move_and_wait_for_pos(position=0, speed=10, force=10)
 #    gripper.move_and_wait_for_pos(position=255, speed=10, force=10)
-    gripper.disconnect()
+    # gripper.disconnect()
 '''

@@ -51,6 +51,7 @@ add_message_files(
   FILES
   Robotiq2FGripper_robot_input.msg
   Robotiq2FGripper_robot_output.msg
+  wrapper.msg
 )
 
 ## Generate services in the 'srv' folder
@@ -105,6 +106,7 @@ generate_messages(
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES robotiq_urcap_control
+CATKIN_DEPENDS message_runtime
 #  CATKIN_DEPENDS message_generation rospy
 #  DEPENDS system_lib
 )
